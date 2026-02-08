@@ -50,8 +50,10 @@ RUN_TAG = _cfg("RUN_TAG", "run")
 
 # directories
 RESULTS_DIR = Path(_cfg("RESULTS_DIR", "results"))
+REPORTS_DIR = Path(_cfg("REPORTS_DIR", RESULTS_DIR / "reports"))
 CACHE_DIR = Path(_cfg("CACHE_DIR", RESULTS_DIR / "cache"))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Behavior knobs
@@ -114,7 +116,7 @@ def run_rolling_spillovers(
     """
 
     cache_path = CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
-    summary_csv = RESULTS_DIR / f"spillovers_summary_{RUN_TAG}.csv"
+    summary_csv = REPORTS_DIR / f"spillovers_summary_{RUN_TAG}.csv"
 
     if use_cache and (not force_recompute) and cache_path.exists():
         if VERBOSE:
@@ -148,7 +150,7 @@ def run_rolling_spillovers(
         )
 
     # Load returns
-    bundle = get_returns_bundle(use_cache=True)
+    bundle = get_returns_bundle(use_cache=use_cache)
 
     if SPLIT_TO_USE == "train":
         rets = bundle.splits["train"]

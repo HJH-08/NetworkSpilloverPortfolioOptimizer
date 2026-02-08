@@ -172,6 +172,10 @@ def run_backtest(
     w_targets_shifted = w_targets_shifted.shift(1)  # apply starting next day
     w_targets_shifted = w_targets_shifted.dropna(how="all")
 
+    # Rebalance only when target weights change (i.e., on scheduled rebalance dates)
+    # This avoids daily "rebalance" due to drift when targets are held constant.
+    is_rebalance = w_targets_shifted.ne(w_targets_shifted.shift(1)).any(axis=1)
+
     # Limit returns to the period where we have weights
     rets = rets.loc[w_targets_shifted.index]
 
@@ -204,8 +208,8 @@ def run_backtest(
         # 3) If dt is a rebalance day in the *shifted target* schedule, trade to target
         w_target_today = w_targets_shifted.loc[dt].values.astype(float)
 
-        if not np.allclose(w_target_today, w_current, atol=1e-12, rtol=0.0):
-            # turnover (one-way)
+        if bool(is_rebalance.loc[dt]):
+            # turnover (one-way) based on drifted holdings
             turnover = 0.5 * float(np.abs(w_target_today - w_drift).sum())
             cost = (tcost_bps / 10000.0) * turnover
 

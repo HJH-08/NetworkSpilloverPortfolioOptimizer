@@ -23,12 +23,19 @@ np.random.seed(SEED)
 
 ROOT_DIR: Path = Path(__file__).resolve().parent
 DATA_DIR: Path = ROOT_DIR / "data"
-CACHE_DIR: Path = ROOT_DIR / "cache"
+
+# Raw data cache (e.g., downloaded price CSVs)
+DATA_CACHE_DIR: Path = ROOT_DIR / "cache"
+
+# All experiment outputs (plots, reports, model caches, logs)
 RESULTS_DIR: Path = ROOT_DIR / "results"
+PLOTS_DIR: Path = RESULTS_DIR / "plots"
+REPORTS_DIR: Path = RESULTS_DIR / "reports"
+CACHE_DIR: Path = RESULTS_DIR / "cache"
 FIG_DIR: Path = RESULTS_DIR / "figures"
 LOG_DIR: Path = RESULTS_DIR / "logs"
 
-for _p in (DATA_DIR, CACHE_DIR, RESULTS_DIR, FIG_DIR, LOG_DIR):
+for _p in (DATA_CACHE_DIR, RESULTS_DIR, PLOTS_DIR, REPORTS_DIR, CACHE_DIR, FIG_DIR, LOG_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
 

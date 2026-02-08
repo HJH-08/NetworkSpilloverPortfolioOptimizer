@@ -29,7 +29,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from config import CACHE_DIR, ANNUALIZATION_FACTOR, RISK_FREE_RATE_ANNUAL
+from config import REPORTS_DIR, ANNUALIZATION_FACTOR, RISK_FREE_RATE_ANNUAL
 
 
 # -------------------------
@@ -103,7 +103,7 @@ def compute_window_metrics(equity: pd.Series) -> Dict[str, float]:
 def main() -> None:
     # Locate the equity file (prefer cache/results, but accept local file if you run elsewhere)
     candidate_paths = [
-        os.path.join(CACHE_DIR, "results", "equity_curves.csv"),
+        os.path.join(REPORTS_DIR, "equity_curves.csv"),
         os.path.join(os.getcwd(), "equity_curves.csv"),
     ]
     path = next((p for p in candidate_paths if os.path.exists(p)), None)
@@ -115,7 +115,7 @@ def main() -> None:
     print("[crisis_eval] equity shape:", eq.shape, "columns:", list(eq.columns))
     print("[crisis_eval] date range:", eq.index.min().date(), "->", eq.index.max().date())
 
-    out_dir = os.path.join(CACHE_DIR, "results")
+    out_dir = REPORTS_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     # Full-sample metrics (useful baseline)

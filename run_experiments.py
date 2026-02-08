@@ -27,13 +27,9 @@ from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 
-from config import CACHE_DIR, TCOST_BPS, WINDOW, STEP
+from config import CACHE_DIR, REPORTS_DIR, TCOST_BPS, WINDOW, STEP, WEIGHT_BOUNDS
 from returns import get_returns_bundle
-from benchmarks import (
-    compute_rebalance_dates,
-    equal_weight_over_time,
-    min_variance_over_time,
-)
+from benchmarks import equal_weight_over_time, min_variance_over_time
 from spillover_aware_optimizer import OptConfig
 from rebalance_engine import compute_weights_over_time
 from backtest import run_backtest, compute_metrics
@@ -49,6 +45,13 @@ def _pick_spillover_npz() -> str:
         raise RuntimeError(f"No .npz spillover files found in CACHE_DIR={CACHE_DIR}")
     files.sort(key=lambda p: os.path.getmtime(p))
     return files[-1]
+
+
+def _load_spillover_dates(npz_path: str) -> pd.DatetimeIndex:
+    data = np.load(npz_path, allow_pickle=True)
+    if "dates" not in data.files:
+        raise RuntimeError("Spillover npz missing 'dates' field; cannot align rebalance dates.")
+    return pd.to_datetime(data["dates"])
 
 
 def _align_weights_to_common_assets(
@@ -68,6 +71,9 @@ def _align_weights_to_common_assets(
     # Clean dust + renormalize each row
     w2 = w2.where(w2.abs() >= 1e-10, 0.0)
     s = w2.sum(axis=1)
+    if (s <= 0).any():
+        bad = s[s <= 0].index[:5]
+        raise ValueError(f"Found zero/negative weight row sums in weights: {list(bad)}")
     w2 = w2.div(s, axis=0)
     return w2
 
@@ -96,28 +102,30 @@ def main() -> None:
     assets = rets.columns
     print("[run] returns shape:", rets.shape, "assets:", list(assets))
 
-    # Rebalance dates
-    rebal_dates = compute_rebalance_dates(rets.index, window=WINDOW, step=STEP)
+    # Use spillover cache dates so ALL strategies share identical rebalance dates
+    npz_path = _pick_spillover_npz()
+    print("[run] Using spillover npz:", npz_path)
+    rebal_dates = _load_spillover_dates(npz_path).intersection(rets.index)
+    if len(rebal_dates) == 0:
+        raise RuntimeError("No spillover rebalance dates overlap returns index.")
     print("[run] #rebalance dates:", len(rebal_dates), "first/last:", rebal_dates[0].date(), rebal_dates[-1].date())
 
     # ----------------------------
     # 1) Equal weight
     # ----------------------------
-    ew_w = equal_weight_over_time(rebal_dates, assets, w_max=None)
+    w_max = WEIGHT_BOUNDS[1]
+    ew_w = equal_weight_over_time(rebal_dates, assets, w_max=w_max)
 
     # ----------------------------
     # 2) Min variance (cov-only)
     # ----------------------------
-    mv_cfg = OptConfig(lam=0.0, w_max=0.20, long_only=True, fully_invested=True)
+    mv_cfg = OptConfig(lam=0.0, w_max=w_max, long_only=True, fully_invested=True)
     mv_w = min_variance_over_time(rets, rebal_dates, window=WINDOW, opt_cfg=mv_cfg)
 
     # ----------------------------
     # 3) Spillover aware
     # ----------------------------
-    npz_path = _pick_spillover_npz()
-    print("[run] Using spillover npz:", npz_path)
-
-    sp_cfg = OptConfig(lam=0.5, w_max=0.20, long_only=True, fully_invested=True)
+    sp_cfg = OptConfig(lam=0.5, w_max=w_max, long_only=True, fully_invested=True)
     sp_w = compute_weights_over_time(
         spillover_npz_path=npz_path,
         model="spillover_aware",
@@ -171,7 +179,7 @@ def main() -> None:
     # ----------------------------
     # Save outputs
     # ----------------------------
-    out_dir = os.path.join(CACHE_DIR, "results")
+    out_dir = REPORTS_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     table_path = os.path.join(out_dir, "comparison_table.csv")

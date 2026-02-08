@@ -55,8 +55,24 @@ def _load_npz(path: Path) -> Dict[str, np.ndarray]:
 
 
 def _cache_path() -> Path:
-    # Must match naming in rolling_spillovers.py
-    return CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
+    # Must match naming in rolling_spillovers.py, but be robust to variants
+    candidate = CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
+    if candidate.exists():
+        return candidate
+
+    candidate2 = CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_reb{REBALANCE_EVERY_N_DAYS}_fevd{FEVD_HORIZON}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
+    if candidate2.exists():
+        return candidate2
+
+    matches = sorted(CACHE_DIR.glob(f"spillovers_{RUN_TAG}*.npz"))
+    if matches:
+        return matches[-1]
+
+    raise FileNotFoundError(
+        "Could not locate spillover cache .npz in CACHE_DIR.\n"
+        f"Looked for:\n- {candidate}\n- {candidate2}\n- spillovers_{RUN_TAG}*.npz\n"
+        f"CACHE_DIR={CACHE_DIR}"
+    )
 
 
 # -------------------------

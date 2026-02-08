@@ -20,8 +20,8 @@ import pandas as pd
 
 from config import (
     DATA_DIR,
-    CACHE_DIR,
-    RESULTS_DIR,
+    DATA_CACHE_DIR,
+    REPORTS_DIR,
     DATA_PROVIDER,
     UNIVERSE,
     UNIVERSE_IS_RIC,
@@ -32,7 +32,7 @@ from config import (
     FFILL_LIMIT,
     RUN_TAG,
     MIN_ASSET_COVERAGE,
-    MIN_START_DATE
+    MIN_START_DATE,
 )
 
 
@@ -44,6 +44,13 @@ def _ensure_datetime_index(df: pd.DataFrame, date_col: str = "Date") -> pd.DataF
     if date_col in df.columns:
         df[date_col] = pd.to_datetime(df[date_col], utc=False)
         df = df.set_index(date_col)
+    else:
+        # If we have an unnamed index column from CSV, promote it
+        unnamed_cols = [c for c in df.columns if str(c).lower().startswith("unnamed")]
+        if len(unnamed_cols) == 1:
+            c0 = unnamed_cols[0]
+            df[c0] = pd.to_datetime(df[c0], utc=False)
+            df = df.set_index(c0)
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index, utc=False)
     df = df.sort_index()
@@ -228,7 +235,7 @@ def get_price_panel(
     Returns: cleaned prices with aligned dates and missing-data policy applied.
     """
     cache_name = cache_name or f"prices_{RUN_TAG}.csv"
-    cache_path = CACHE_DIR / cache_name
+    cache_path = DATA_CACHE_DIR / cache_name
 
     if use_cache and cache_path.exists():
         prices = load_prices_from_csv(cache_path)
@@ -263,7 +270,7 @@ def get_price_panel(
 
     if dropped:
         print(f"[data_loader] Dropping {len(dropped)} assets for low coverage: {dropped}")
-        dropped_path = RESULTS_DIR / f"dropped_assets_{RUN_TAG}.txt"
+        dropped_path = REPORTS_DIR / f"dropped_assets_{RUN_TAG}.txt"
         with open(dropped_path, "w") as f:
             f.write("Dropped assets (low coverage):\n")
             for a in dropped:
@@ -301,4 +308,3 @@ if __name__ == "__main__":
     print(prices.head())
     print(prices.tail())
     print("Shape:", prices.shape)
-

@@ -48,10 +48,12 @@ REBALANCE_EVERY_N_DAYS = _cfg("REBALANCE_EVERY_N_DAYS", 20)
 FEVD_HORIZON = _cfg("FEVD_HORIZON", 10)
 
 RESULTS_DIR = Path(_cfg("RESULTS_DIR", "results"))
+REPORTS_DIR = Path(_cfg("REPORTS_DIR", RESULTS_DIR / "reports"))
 CACHE_DIR = Path(_cfg("CACHE_DIR", RESULTS_DIR / "cache"))
 PLOTS_DIR = Path(_cfg("PLOTS_DIR", RESULTS_DIR / "plots"))
 
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -211,7 +213,7 @@ if __name__ == "__main__":
     net_df = metrics["net"]
 
     # Save wide
-    wide_path = RESULTS_DIR / f"network_metrics_wide_{RUN_TAG}.csv"
+    wide_path = REPORTS_DIR / f"network_metrics_wide_{RUN_TAG}.csv"
     wide = pd.concat(
         {
             "to_others": to_df,
@@ -233,7 +235,7 @@ if __name__ == "__main__":
         on=["date", "asset"],
         how="inner",
     )
-    long_path = RESULTS_DIR / f"network_metrics_{RUN_TAG}.csv"
+    long_path = REPORTS_DIR / f"network_metrics_{RUN_TAG}.csv"
     long.to_csv(long_path, index=False)
     print("[network_metrics] Saved long CSV:", long_path)
 
