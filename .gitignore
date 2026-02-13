@@ -1,0 +1,23 @@
+# Ignore everything
+*
+
+# But allow Python files
+!*.py
+
+# Allow directories so Git can traverse them
+!*/
+
+# Allow project metadata/docs
+!README.md
+!requirements.txt
+!requirements-dev.txt
+!.gitignore
+
+# Common Python junk (still ignored even if they contain .py files)
+__pycache__/
+.venv/
+
+# Generated outputs
+results/
+cache/
+data/
