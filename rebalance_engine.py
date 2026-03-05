@@ -23,8 +23,6 @@ import pandas as pd
 
 from config import (
     WINDOW,
-    REBALANCE_EVERY_N_DAYS,
-    RUN_TAG,
     CACHE_DIR,
 )
 
@@ -213,7 +211,7 @@ def compute_weights_over_time(
 if __name__ == "__main__":
     # Update this path to match your saved file name.
     # Example from your logs:
-    # /Users/.../cache/spillovers_v1_win250_reb20_fevd10_win250_step20_H10.npz
+    # /Users/.../results/cache/spillovers_v1_win250_reb20_fevd10_win250_step20_H10.npz
     import os
 
 
@@ -240,4 +238,3 @@ if __name__ == "__main__":
     print("Row sums (should be 1):\n", w_df.sum(axis=1).head())
 
     
-

@@ -22,20 +22,17 @@ SEED: int = 42
 np.random.seed(SEED)
 
 ROOT_DIR: Path = Path(__file__).resolve().parent
-DATA_DIR: Path = ROOT_DIR / "data"
 
 # Raw data cache (e.g., downloaded price CSVs)
 DATA_CACHE_DIR: Path = ROOT_DIR / "cache"
 
-# All experiment outputs (plots, reports, model caches, logs)
+# All experiment outputs (plots, reports, model caches)
 RESULTS_DIR: Path = ROOT_DIR / "results"
 PLOTS_DIR: Path = RESULTS_DIR / "plots"
 REPORTS_DIR: Path = RESULTS_DIR / "reports"
 CACHE_DIR: Path = RESULTS_DIR / "cache"
-FIG_DIR: Path = RESULTS_DIR / "figures"
-LOG_DIR: Path = RESULTS_DIR / "logs"
 
-for _p in (DATA_CACHE_DIR, RESULTS_DIR, PLOTS_DIR, REPORTS_DIR, CACHE_DIR, FIG_DIR, LOG_DIR):
+for _p in (DATA_CACHE_DIR, RESULTS_DIR, PLOTS_DIR, REPORTS_DIR, CACHE_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
 
@@ -71,8 +68,6 @@ END_DATE: str = "2025-12-31"
 
 # Which price field to use from the data source. For total-return style prices, you may prefer adjusted.
 PRICE_FIELD: str = "TRDPRC_1"  # LSEG example snapshot field; for history you may use a timeseries field in data_loader.py
-HIST_FIELD = "TRDPRC_1"   # we still want last price, but historically
-HIST_FREQUENCY = "D"      # daily
 
 # Frequency for returns construction
 FREQ: Literal["1D"] = "1D"
@@ -142,13 +137,7 @@ RIDGE_EPS: float = 1e-8  # tiny diagonal jitter for near-singular matrices (if n
 # -------------------------
 
 ZERO_DIAGONAL: bool = True
-EDGE_THRESHOLD: float = 0.0  # start with no pruning; later try 0.5% etc.
-METRICS: Tuple[str, ...] = (
-    "out_spillover",
-    "in_spillover",
-    "net_spillover",
-    "eigenvector_centrality",
-)
+# (Network thresholding removed for now; spillover matrices are used directly.)
 
 
 # -------------------------
@@ -192,8 +181,11 @@ RISK_FREE_RATE_ANNUAL: float = 0.0  # set nonzero if you want Sharpe excess retu
 STRESS_PERIODS: Tuple[Tuple[str, str, str], ...] = (
     ("GFC_aftershock", "2011-07-01", "2011-12-31"),
     ("Euro_crisis", "2012-05-01", "2012-08-31"),
+    ("Volmageddon", "2018-02-01", "2018-02-28"),
+    ("Q4_2018_selloff", "2018-10-01", "2018-12-24"),
     ("COVID_crash", "2020-02-15", "2020-04-30"),
     ("Inflation_shock", "2022-01-01", "2022-10-31"),
+    ("Banking_stress", "2023-03-06", "2023-03-31"),
 )
 
 CALM_PERIODS: Tuple[Tuple[str, str, str], ...] = (
@@ -240,3 +232,40 @@ class Config:
 
 
 CFG = Config()
+
+
+def config_dict() -> dict:
+    """
+    Return a stable dictionary of config values for reproducibility.
+    Includes all UPPERCASE module-level constants.
+    """
+    out = {}
+    for k, v in globals().items():
+        if not k.isupper():
+            continue
+        # Skip modules / classes
+        if callable(v):
+            continue
+        if isinstance(v, Config):
+            continue
+        try:
+            out[k] = v
+        except Exception:
+            pass
+    return out
+
+
+def save_config(path: Path) -> None:
+    """
+    Save config dictionary to JSON for run manifests.
+    """
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = config_dict()
+    # Convert Paths to strings for JSON
+    for k, v in list(data.items()):
+        if isinstance(v, Path):
+            data[k] = str(v)
+    with path.open("w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)

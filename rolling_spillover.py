@@ -1,5 +1,5 @@
 """
-rolling_spillovers.py
+rolling_spillover.py
 
 Phase 2C: Rolling spillover estimation over time.
 
@@ -15,7 +15,7 @@ For each evaluation date t (typically on a rebalance schedule):
 Outputs are cached to disk for reproducibility and speed.
 
 Typical usage:
-    python rolling_spillovers.py
+    python rolling_spillover.py
 """
 
 from __future__ import annotations

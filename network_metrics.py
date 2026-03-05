@@ -194,7 +194,7 @@ def plot_top_k_time_series(
 # Main (self-test)
 # -------------------------
 
-if __name__ == "__main__":
+def main() -> None:
     cache_path = _cache_path()
     blob = _load_npz(cache_path)
 
@@ -270,3 +270,7 @@ if __name__ == "__main__":
         k=3,
     )
     print("[network_metrics] Saved:", p_rx)
+
+
+if __name__ == "__main__":
+    main()

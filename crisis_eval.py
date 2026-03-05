@@ -4,7 +4,7 @@ crisis_eval.py
 Crisis / stress-window evaluation for your strategies.
 
 Reads:
-- equity_curves.csv produced by run_experiment.py (columns: EqualWeight, MinVar, Spillover)
+- equity_curves.csv produced by run_experiments.py (columns: EqualWeight, MeanVar, MinVar, Spillover)
 
 Computes, for each window:
 - Cumulative return
@@ -17,13 +17,13 @@ Usage:
 
 Outputs:
 - prints tables
-- saves CSVs to cache/results/
+- saves CSVs to results/reports/
+- saves a combined stress summary CSV to results/reports/metrics_stress_summary.csv
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -37,6 +37,7 @@ from config import REPORTS_DIR, ANNUALIZATION_FACTOR, RISK_FREE_RATE_ANNUAL
 # -------------------------
 # You can edit these dates freely.
 WINDOWS: List[Tuple[str, str, str]] = [
+    ("Volmageddon", "2018-02-01", "2018-02-28"),
     ("COVID Crash", "2020-02-19", "2020-04-30"),
     ("2022 Tightening", "2022-01-03", "2022-10-14"),
     ("2023 Banking Stress", "2023-03-06", "2023-03-31"),
@@ -101,14 +102,14 @@ def compute_window_metrics(equity: pd.Series) -> Dict[str, float]:
 # -------------------------
 
 def main() -> None:
-    # Locate the equity file (prefer cache/results, but accept local file if you run elsewhere)
+    # Locate the equity file (prefer results/reports, but accept local file if you run elsewhere)
     candidate_paths = [
         os.path.join(REPORTS_DIR, "equity_curves.csv"),
         os.path.join(os.getcwd(), "equity_curves.csv"),
     ]
     path = next((p for p in candidate_paths if os.path.exists(p)), None)
     if path is None:
-        raise FileNotFoundError("Could not find equity_curves.csv. Run run_experiment.py first.")
+        raise FileNotFoundError("Could not find equity_curves.csv. Run run_experiments.py first.")
 
     eq = pd.read_csv(path, index_col=0, parse_dates=True).sort_index()
     print("[crisis_eval] loaded:", path)
@@ -126,6 +127,7 @@ def main() -> None:
     full_df.to_csv(os.path.join(out_dir, "metrics_full_sample.csv"))
 
     # Windowed tables
+    summary_rows = []
     for name, start, end in WINDOWS:
         start_ts = pd.to_datetime(start)
         end_ts = pd.to_datetime(end)
@@ -147,7 +149,16 @@ def main() -> None:
         print(df.round(3))
 
         safe_name = name.lower().replace(" ", "_").replace("/", "_")
-        df.to_csv(os.path.join(out_dir, f"metrics_{safe_name}.csv"))
+        out_path = os.path.join(out_dir, f"metrics_{safe_name}.csv")
+        df.to_csv(out_path)
+        summary_rows.append(df.assign(window=name))
+
+    # Combined stress summary
+    if summary_rows:
+        summary = pd.concat(summary_rows, axis=0)
+        summary_path = os.path.join(out_dir, "metrics_stress_summary.csv")
+        summary.to_csv(summary_path)
+        print("[saved] stress summary:", summary_path)
 
     print("\n[saved] metrics_*.csv in", out_dir)
     print("Tip: If Spillover only wins in stress windows (lower MaxDD), that supports your thesis.")

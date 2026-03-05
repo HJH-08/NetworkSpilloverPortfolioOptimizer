@@ -9,13 +9,15 @@ Goal:
 
 Benchmarks included:
 1) Equal-weight
-2) Minimum-variance (covariance-only) using the same CVX optimizer as spillover_aware_optimizer.py
+2) Mean-variance (expected return + covariance)
+3) Minimum-variance (covariance-only) using the same CVX optimizer as spillover_aware_optimizer.py
 
-Typical usage (in run_experiment.py):
+Typical usage (in run_experiments.py):
 - load returns (daily)
 - get rebalance dates (or reuse spillover cache dates)
 - compute weights for:
     - equal-weight
+    - mean-variance
     - min-variance
     - spillover-aware (already in rebalance_engine.py)
 - then pass each weights_df into backtest.run_backtest(...)
@@ -23,14 +25,13 @@ Typical usage (in run_experiment.py):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
 from config import WINDOW, STEP
-from spillover_aware_optimizer import OptConfig, optimize_min_variance
+from spillover_aware_optimizer import OptConfig, optimize_min_variance, optimize_mean_variance
 
 
 # -------------------------
@@ -163,6 +164,74 @@ def min_variance_over_time(
 
 
 # -------------------------
+# Mean-variance benchmark
+# -------------------------
+
+def mean_variance_over_time(
+    returns_df: pd.DataFrame,
+    rebalance_dates: pd.DatetimeIndex,
+    *,
+    window: int = WINDOW,
+    opt_cfg: OptConfig = OptConfig(lam=0.0),
+    risk_aversion: float = 1.0,
+) -> pd.DataFrame:
+    """
+    Mean-variance benchmark.
+
+    For each rebalance date t:
+    - take the past `window` daily returns up to t
+    - compute sample covariance and mean returns
+    - solve mean-variance with the same constraints
+    """
+    rets = returns_df.copy().sort_index()
+    rebal = pd.DatetimeIndex(rebalance_dates).sort_values()
+
+    # Only keep rebalance dates that exist in returns index
+    rebal = rebal.intersection(rets.index)
+
+    assets = list(rets.columns)
+    if len(assets) < 2:
+        raise ValueError("Need at least 2 assets for mean-variance")
+
+    W_rows: List[np.ndarray] = []
+    W_dates: List[pd.Timestamp] = []
+
+    w_prev: Optional[np.ndarray] = None
+
+    for t in rebal:
+        end_loc = rets.index.get_loc(t)
+        start_loc = end_loc - (window - 1)
+        if start_loc < 0:
+            continue  # not enough history
+
+        window_rets = rets.iloc[start_loc : end_loc + 1]
+        if window_rets.isna().any().any():
+            continue  # skip if missing data
+
+        Sigma = window_rets.cov().values
+        mu = window_rets.mean().values
+
+        res = optimize_mean_variance(Sigma, mu, cfg=opt_cfg, risk_aversion=risk_aversion, w_prev=w_prev)
+        w = np.asarray(res.w, dtype=float).reshape(-1)
+
+        # Clean numerical dust and renormalize (keeps things tidy)
+        w[w < 1e-10] = 0.0
+        s = w.sum()
+        if s <= 0:
+            continue
+        w = w / s
+
+        W_rows.append(w)
+        W_dates.append(t)
+        w_prev = w
+
+    if not W_rows:
+        raise RuntimeError("No mean-variance weights computed. Check window / date alignment.")
+
+    return pd.DataFrame(W_rows, index=pd.to_datetime(W_dates), columns=assets)
+
+
+# -------------------------
 # Tiny self-test
 # -------------------------
 
@@ -183,3 +252,7 @@ if __name__ == "__main__":
     mv = min_variance_over_time(rets, rebal_dates, window=WINDOW, opt_cfg=cfg)
     print("[minvar] shape:", mv.shape, "row sum head:", mv.sum(axis=1).head().tolist())
     print("[minvar] first weights:\n", mv.iloc[0].sort_values(ascending=False).head(8))
+
+    # Mean var
+    mvg = mean_variance_over_time(rets, rebal_dates, window=WINDOW, opt_cfg=cfg, risk_aversion=1.0)
+    print("[meanvar] shape:", mvg.shape, "row sum head:", mvg.sum(axis=1).head().tolist())

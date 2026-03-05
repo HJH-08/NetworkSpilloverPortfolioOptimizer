@@ -19,7 +19,6 @@ from typing import Iterable, Optional, Sequence, Tuple
 import pandas as pd
 
 from config import (
-    DATA_DIR,
     DATA_CACHE_DIR,
     REPORTS_DIR,
     DATA_PROVIDER,

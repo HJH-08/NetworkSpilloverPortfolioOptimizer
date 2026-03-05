@@ -10,7 +10,7 @@ What this module does:
 - Checks stability (all roots outside unit circle)
 - Returns a clean "result object" you can feed into FEVD later
 
-This is intentionally "window-local" so rolling_spillovers.py can call it repeatedly.
+This is intentionally "window-local" so rolling_spillover.py can call it repeatedly.
 """
 
 from __future__ import annotations

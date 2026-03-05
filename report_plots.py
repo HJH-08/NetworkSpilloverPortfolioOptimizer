@@ -55,7 +55,7 @@ def _load_npz(path: Path) -> Dict[str, np.ndarray]:
 
 
 def _cache_path() -> Path:
-    # Must match naming in rolling_spillovers.py, but be robust to variants
+    # Must match naming in rolling_spillover.py, but be robust to variants
     candidate = CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
     if candidate.exists():
         return candidate
@@ -140,12 +140,12 @@ def plot_W_heatmap(
 # Main
 # -------------------------
 
-if __name__ == "__main__":
+def main() -> None:
     cache_path = _cache_path()
     if not cache_path.exists():
         raise FileNotFoundError(
             f"Could not find cache at: {cache_path}\n"
-            "Run rolling_spillovers.py first, or check RUN_TAG/WINDOW/STEP/H config."
+            "Run rolling_spillover.py first, or check RUN_TAG/WINDOW/STEP/H config."
         )
 
     blob = _load_npz(cache_path)
@@ -173,3 +173,7 @@ if __name__ == "__main__":
     top = tci.sort_values(ascending=False).head(5)
     print("\n[plots] Top 5 TCI dates:")
     print(top)
+
+
+if __name__ == "__main__":
+    main()

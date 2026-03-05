@@ -155,7 +155,7 @@ def run_backtest(
     Backtest using drifted weights and discrete rebalancing.
 
     Transaction cost model (simple, standard):
-    - turnover_oneway = 0.5 * sum_i |w_target_i - w_current_i|
+    - turnover_oneway = 0.5 * sum_i |w_target_i - w_drift_i|
     - cost_return_drag = (tcost_bps / 10000) * turnover_oneway
     - apply on rebalance day as a negative return
 
@@ -172,9 +172,14 @@ def run_backtest(
     w_targets_shifted = w_targets_shifted.shift(1)  # apply starting next day
     w_targets_shifted = w_targets_shifted.dropna(how="all")
 
-    # Rebalance only when target weights change (i.e., on scheduled rebalance dates)
-    # This avoids daily "rebalance" due to drift when targets are held constant.
-    is_rebalance = w_targets_shifted.ne(w_targets_shifted.shift(1)).any(axis=1)
+    # Rebalance on the scheduled target dates (applied next trading day),
+    # even if target weights are unchanged (so drift is corrected).
+    is_rebalance = pd.Series(False, index=rets.index)
+    rebal_dates = w_targets.index
+    rebal_pos = rets.index.get_indexer(rebal_dates)
+    mask = (rebal_pos >= 0) & (rebal_pos + 1 < len(rets.index))
+    apply_dates = rets.index[rebal_pos[mask] + 1]
+    is_rebalance.loc[apply_dates] = True
 
     # Limit returns to the period where we have weights
     rets = rets.loc[w_targets_shifted.index]

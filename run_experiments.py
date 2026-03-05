@@ -1,18 +1,19 @@
 """
-run_experiment.py
+run_experiments.py
 
 One-command experiment runner:
 - loads returns
 - computes weights for:
     1) Equal-weight
-    2) Min-variance (covariance-only)
-    3) Spillover-aware
+    2) Mean-variance
+    3) Min-variance (covariance-only)
+    4) Spillover-aware
 - backtests each with the SAME engine + assumptions
 - prints a comparison table
-- saves outputs to cache/
+- saves outputs to results/reports/
 
 Usage:
-    python run_experiment.py
+    python run_experiments.py
 
 Tip:
 - Make sure you’ve refreshed caches if needed (prices + spillovers).
@@ -21,17 +22,26 @@ Tip:
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
+import json
+import platform
+import sys
+from pathlib import Path
+from importlib import metadata
 from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
-from config import CACHE_DIR, REPORTS_DIR, TCOST_BPS, WINDOW, STEP, WEIGHT_BOUNDS
+from config import CACHE_DIR, REPORTS_DIR, PLOTS_DIR, TCOST_BPS, WINDOW, WEIGHT_BOUNDS, RUN_TAG, save_config
 from returns import get_returns_bundle
-from benchmarks import equal_weight_over_time, min_variance_over_time
+from benchmarks import equal_weight_over_time, min_variance_over_time, mean_variance_over_time
 from spillover_aware_optimizer import OptConfig
 from rebalance_engine import compute_weights_over_time
+import crisis_eval
+import report_plots
+import network_metrics
+from scripts import empirical_checks
 from backtest import run_backtest, compute_metrics
 
 
@@ -42,7 +52,12 @@ def _pick_spillover_npz() -> str:
     """
     files = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".npz")]
     if not files:
-        raise RuntimeError(f"No .npz spillover files found in CACHE_DIR={CACHE_DIR}")
+        print(f"[run] No spillover .npz found in {CACHE_DIR}. Recomputing...")
+        from rolling_spillover import run_rolling_spillovers
+        run_rolling_spillovers(use_cache=True, force_recompute=True)
+        files = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".npz")]
+        if not files:
+            raise RuntimeError(f"No .npz spillover files found in CACHE_DIR={CACHE_DIR} after recompute.")
     files.sort(key=lambda p: os.path.getmtime(p))
     return files[-1]
 
@@ -76,6 +91,22 @@ def _align_weights_to_common_assets(
         raise ValueError(f"Found zero/negative weight row sums in weights: {list(bad)}")
     w2 = w2.div(s, axis=0)
     return w2
+
+
+def _env_manifest() -> dict:
+    deps = ["numpy", "pandas", "scipy", "statsmodels", "cvxpy", "matplotlib"]
+    versions = {}
+    for d in deps:
+        try:
+            versions[d] = metadata.version(d)
+        except metadata.PackageNotFoundError:
+            versions[d] = "MISSING"
+
+    return {
+        "python": sys.version.replace("\n", " "),
+        "platform": platform.platform(),
+        "dependencies": versions,
+    }
 
 
 def _run_strategy(
@@ -117,13 +148,18 @@ def main() -> None:
     ew_w = equal_weight_over_time(rebal_dates, assets, w_max=w_max)
 
     # ----------------------------
-    # 2) Min variance (cov-only)
+    # 2) Mean-variance
     # ----------------------------
     mv_cfg = OptConfig(lam=0.0, w_max=w_max, long_only=True, fully_invested=True)
+    mean_w = mean_variance_over_time(rets, rebal_dates, window=WINDOW, opt_cfg=mv_cfg, risk_aversion=1.0)
+
+    # ----------------------------
+    # 3) Min variance (cov-only)
+    # ----------------------------
     mv_w = min_variance_over_time(rets, rebal_dates, window=WINDOW, opt_cfg=mv_cfg)
 
     # ----------------------------
-    # 3) Spillover aware
+    # 4) Spillover aware
     # ----------------------------
     sp_cfg = OptConfig(lam=0.5, w_max=w_max, long_only=True, fully_invested=True)
     sp_w = compute_weights_over_time(
@@ -138,6 +174,7 @@ def main() -> None:
     # Align all weight panels to identical assets
     # ----------------------------
     ew_w = _align_weights_to_common_assets(ew_w, assets)
+    mean_w = _align_weights_to_common_assets(mean_w, assets)
     mv_w = _align_weights_to_common_assets(mv_w, assets)
     sp_w = _align_weights_to_common_assets(sp_w, assets)
 
@@ -147,7 +184,12 @@ def main() -> None:
     results = {}
     equity = {}
 
-    for name, wdf in [("EqualWeight", ew_w), ("MinVar", mv_w), ("Spillover", sp_w)]:
+    for name, wdf in [
+        ("EqualWeight", ew_w),
+        ("MeanVar", mean_w),
+        ("MinVar", mv_w),
+        ("Spillover", sp_w),
+    ]:
         eq, met = _run_strategy(name, wdf, rets, tcost_bps=TCOST_BPS)
         results[name] = met
         equity[name] = eq
@@ -190,6 +232,7 @@ def main() -> None:
     equity_df.to_csv(equity_path)
 
     ew_w.to_csv(os.path.join(out_dir, "weights_equalweight.csv"))
+    mean_w.to_csv(os.path.join(out_dir, "weights_meanvar.csv"))
     mv_w.to_csv(os.path.join(out_dir, "weights_minvar.csv"))
     sp_w.to_csv(os.path.join(out_dir, "weights_spillover.csv"))
 
@@ -197,6 +240,47 @@ def main() -> None:
     print(" -", table_path)
     print(" -", equity_path)
     print(" - weights_*.csv in", out_dir)
+
+    # Save equity curve plot
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    plot_path = os.path.join(PLOTS_DIR, f"equity_curves_{RUN_TAG}.png")
+    plt.figure(figsize=(10, 5))
+    for col in equity_df.columns:
+        plt.plot(
+            equity_df.index,
+            equity_df[col].values,
+            label=col,
+            linewidth=1.2,
+            alpha=0.9,
+        )
+    plt.title("Equity Curves")
+    plt.xlabel("Date")
+    plt.ylabel("Equity")
+    plt.grid(True, alpha=0.25, linewidth=0.7)
+    plt.legend(frameon=True, framealpha=0.9)
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=200)
+    plt.close()
+    print(" -", plot_path)
+
+    # ----------------------------
+    # Save run manifest + config
+    # ----------------------------
+    save_config(Path(out_dir) / f"config_{RUN_TAG}.json")
+    manifest_path = Path(out_dir) / f"run_manifest_{RUN_TAG}.json"
+    with open(manifest_path, "w") as f:
+        json.dump(_env_manifest(), f, indent=2)
+    print(" -", str(manifest_path))
+
+    # ----------------------------
+    # Stress-window metrics (Tables 6.2-6.5)
+    # ----------------------------
+    crisis_eval.main()
+
+    # Plots and network metrics
+    report_plots.main()
+    network_metrics.main()
+    empirical_checks.main()
 
 
 if __name__ == "__main__":

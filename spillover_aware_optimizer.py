@@ -74,6 +74,21 @@ def _make_psd(Sigma: np.ndarray, eps: float) -> np.ndarray:
     return Sigma + eps * np.eye(Sigma.shape[0])
 
 
+def _check_feasible_constraints(N: int, cfg: OptConfig) -> None:
+    """
+    Quick feasibility checks for common constraint combos.
+    """
+    if cfg.long_only and cfg.fully_invested:
+        if cfg.w_max * N < 1.0 - 1e-9:
+            raise ValueError(
+                f"Infeasible constraints: N={N}, w_max={cfg.w_max} implies sum max < 1."
+            )
+        if cfg.w_min * N > 1.0 + 1e-9:
+            raise ValueError(
+                f"Infeasible constraints: N={N}, w_min={cfg.w_min} implies sum min > 1."
+            )
+
+
 def optimize_min_variance(
     Sigma: np.ndarray,
     *,
@@ -85,6 +100,7 @@ def optimize_min_variance(
     """
     Sigma = _make_psd(Sigma, cfg.ridge_eps)
     N = Sigma.shape[0]
+    _check_feasible_constraints(N, cfg)
 
     w = cp.Variable(N)
 
@@ -141,6 +157,7 @@ def optimize_spillover_aware(
     s = np.asarray(s, dtype=float).reshape(-1)
 
     N = _check_shapes(Sigma, s)
+    _check_feasible_constraints(N, cfg)
     Sigma = _make_psd(Sigma, cfg.ridge_eps)
 
     # Make sure s is usable as a penalty weight
@@ -163,6 +180,59 @@ def optimize_spillover_aware(
 
     obj = cp.Minimize(risk_term + cfg.lam * spill_term + cfg.gamma * cp.sum_squares(w))
 
+
+    cons = []
+    if cfg.fully_invested:
+        cons.append(cp.sum(w) == 1.0)
+
+    if cfg.long_only:
+        cons.append(w >= cfg.w_min)
+        cons.append(w <= cfg.w_max)
+
+    if cfg.turnover_limit is not None:
+        if w_prev is None:
+            raise ValueError("turnover_limit set but w_prev is None.")
+        w_prev = np.asarray(w_prev, dtype=float).reshape(-1)
+        cons.append(cp.norm1(w - w_prev) <= cfg.turnover_limit)
+
+    prob = cp.Problem(obj, cons)
+    prob.solve(solver=cp.ECOS, verbose=False)
+
+    if w.value is None:
+        raise RuntimeError(f"Optimization failed. Status={prob.status}")
+
+    return OptResult(w=np.asarray(w.value).reshape(-1), objective_value=float(prob.value), status=prob.status)
+
+
+def optimize_mean_variance(
+    Sigma: np.ndarray,
+    mu: np.ndarray,
+    *,
+    cfg: OptConfig = OptConfig(),
+    risk_aversion: float = 1.0,
+    w_prev: Optional[np.ndarray] = None,
+) -> OptResult:
+    """
+    Mean-variance optimization:
+
+        minimize    risk_aversion * w' Σ w  -  mu' w
+
+    Notes:
+    - mu is expected return vector (length N).
+    - risk_aversion > 0 controls the variance penalty strength.
+    """
+    Sigma = np.asarray(Sigma, dtype=float)
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+
+    N = _check_shapes(Sigma, mu)
+    _check_feasible_constraints(N, cfg)
+    Sigma = _make_psd(Sigma, cfg.ridge_eps)
+
+    w = cp.Variable(N)
+
+    obj = cp.Minimize(
+        risk_aversion * cp.quad_form(w, Sigma) - mu @ w + cfg.gamma * cp.sum_squares(w)
+    )
 
     cons = []
     if cfg.fully_invested:
