@@ -1,7 +1,13 @@
 import numpy as np
 import pandas as pd
 
-from returns import _winsorize_df, _chronological_splits, _flatten_columns
+from returns import (
+    _winsorize_df,
+    _chronological_splits,
+    _flatten_columns,
+    compute_return_descriptive_stats,
+    compute_return_cross_section_summary,
+)
 
 
 def test_winsorize_clips_outliers():
@@ -38,3 +44,33 @@ def test_flatten_columns_handles_multiindex_and_strings():
     cols2 = ["('TRDPRC_1', 'XLE')", "('TRDPRC_1', 'XLF')"]
     flat2 = _flatten_columns(cols2)
     assert list(flat2) == ["XLE", "XLF"]
+
+
+def test_compute_return_descriptive_stats_columns_and_sizes():
+    idx = pd.date_range("2020-01-01", periods=5, freq="D")
+    rets = pd.DataFrame(
+        {
+            "A": [0.01, -0.02, 0.00, 0.03, 0.01],
+            "B": [-0.01, 0.01, 0.02, -0.01, 0.00],
+        },
+        index=idx,
+    )
+    out = compute_return_descriptive_stats(rets, annualization_factor=252)
+    assert list(out.index) == ["A", "B"]
+    assert int(out.loc["A", "sample_size"]) == 5
+    assert "annualised_volatility" in out.columns
+    assert "pct_positive_days" in out.columns
+
+
+def test_compute_return_cross_section_summary_pairwise_corr():
+    idx = pd.date_range("2021-01-01", periods=4, freq="D")
+    rets = pd.DataFrame(
+        {
+            "A": [0.01, 0.02, 0.03, 0.04],
+            "B": [0.01, 0.02, 0.03, 0.04],
+        },
+        index=idx,
+    )
+    summary = compute_return_cross_section_summary(rets, annualization_factor=252)
+    assert int(summary.loc[0, "num_assets"]) == 2
+    assert np.isclose(summary.loc[0, "average_pairwise_correlation"], 1.0)

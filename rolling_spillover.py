@@ -109,14 +109,40 @@ def run_rolling_spillovers(
     *,
     use_cache: bool = True,
     force_recompute: bool = False,
+    window: Optional[int] = None,
+    step: Optional[int] = None,
+    fevd_horizon: Optional[int] = None,
+    run_tag: Optional[str] = None,
+    var_lag_rule: Optional[str] = None,
+    var_lag_fixed_p: Optional[int] = None,
+    var_lag_max: Optional[int] = None,
 ) -> RollingSpillovers:
     """
     Main entry point.
     Computes rolling spillovers and returns a structured object with all outputs.
     """
 
-    cache_path = CACHE_DIR / f"spillovers_{RUN_TAG}_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}.npz"
-    summary_csv = REPORTS_DIR / f"spillovers_summary_{RUN_TAG}.csv"
+    window_eff = int(WINDOW if window is None else window)
+    step_eff = int(REBALANCE_EVERY_N_DAYS if step is None else step)
+    fevd_horizon_eff = int(FEVD_HORIZON if fevd_horizon is None else fevd_horizon)
+    run_tag_eff = RUN_TAG if run_tag is None else run_tag
+    lag_rule_eff = str(var_lag_rule or _cfg("VAR_LAG_CRITERION", "bic")).lower()
+    lag_max_eff = int(_cfg("VAR_LAG_MAX", 10) if var_lag_max is None else var_lag_max)
+
+    if step_eff < 1:
+        raise ValueError("step must be >= 1.")
+    if window_eff < 2:
+        raise ValueError("window must be >= 2.")
+    if fevd_horizon_eff < 1:
+        raise ValueError("fevd_horizon must be >= 1.")
+    if var_lag_fixed_p is not None and int(var_lag_fixed_p) < 1:
+        raise ValueError("var_lag_fixed_p must be >= 1 when provided.")
+    if lag_rule_eff not in {"aic", "bic"}:
+        raise ValueError("var_lag_rule must be one of {'aic', 'bic'}.")
+
+    lag_label = f"p{int(var_lag_fixed_p)}" if var_lag_fixed_p is not None else lag_rule_eff
+    cache_path = CACHE_DIR / f"spillovers_{run_tag_eff}_win{window_eff}_step{step_eff}_H{fevd_horizon_eff}_lag{lag_label}.npz"
+    summary_csv = REPORTS_DIR / f"spillovers_summary_{run_tag_eff}_lag{lag_label}.csv"
 
     if use_cache and (not force_recompute) and cache_path.exists():
         if VERBOSE:
@@ -132,10 +158,14 @@ def run_rolling_spillovers(
         net = pd.DataFrame(blob["net"], index=dates, columns=assets)
 
         meta = {
-            "WINDOW": WINDOW,
-            "STEP": REBALANCE_EVERY_N_DAYS,
-            "H": FEVD_HORIZON,
-            "RUN_TAG": RUN_TAG,
+            "WINDOW": window_eff,
+            "STEP": step_eff,
+            "H": fevd_horizon_eff,
+            "RUN_TAG": run_tag_eff,
+            "VAR_LAG_RULE": lag_rule_eff,
+            "VAR_LAG_FIXED_P": None if var_lag_fixed_p is None else int(var_lag_fixed_p),
+            "VAR_LAG_MAX": lag_max_eff,
+            "cache_path": str(cache_path),
             "loaded_from_cache": True,
         }
         return RollingSpillovers(
@@ -165,9 +195,9 @@ def run_rolling_spillovers(
     assets = list(rets.columns)
     n_rows, n_assets = rets.shape
 
-    eval_idx = _evaluation_indices(n_rows, WINDOW, REBALANCE_EVERY_N_DAYS)
+    eval_idx = _evaluation_indices(n_rows, window_eff, step_eff)
     if len(eval_idx) == 0:
-        raise RuntimeError(f"[rolling] Not enough data rows ({n_rows}) for WINDOW={WINDOW}.")
+        raise RuntimeError(f"[rolling] Not enough data rows ({n_rows}) for WINDOW={window_eff}.")
 
     # Pre-allocate lists (we’ll stack later)
     dates_out: List[pd.Timestamp] = []
@@ -182,16 +212,23 @@ def run_rolling_spillovers(
 
     if VERBOSE:
         print(f"[rolling] Computing spillovers:")
-        print(f"          rows={n_rows}, assets={n_assets}, WINDOW={WINDOW}, STEP={REBALANCE_EVERY_N_DAYS}, H={FEVD_HORIZON}")
+        print(f"          rows={n_rows}, assets={n_assets}, WINDOW={window_eff}, STEP={step_eff}, H={fevd_horizon_eff}")
         print(f"          evaluation points={len(eval_idx)}")
 
+    lag_history: List[int] = []
+
     for k, end_i in enumerate(eval_idx):
-        window = rets.iloc[end_i - WINDOW + 1 : end_i + 1]
+        window_slice = rets.iloc[end_i - window_eff + 1 : end_i + 1]
         date_t = rets.index[end_i]
 
         try:
-            var_out = fit_var(window, lag=None)  # auto lag selection inside
-            sp = compute_gfevd(var_out.model_result, H=FEVD_HORIZON, scale_to_100=True)
+            var_out = fit_var(
+                window_slice,
+                lag=var_lag_fixed_p,
+                maxlags=lag_max_eff,
+                criterion=lag_rule_eff,
+            )
+            sp = compute_gfevd(var_out.model_result, H=fevd_horizon_eff, scale_to_100=True)
 
             # Store
             dates_out.append(date_t)
@@ -200,6 +237,7 @@ def run_rolling_spillovers(
             to_list.append(sp.to_others.values.astype(float))
             from_list.append(sp.from_others.values.astype(float))
             net_list.append(sp.net.values.astype(float))
+            lag_history.append(int(var_out.lag))
 
             fails_in_row = 0
 
@@ -258,14 +296,21 @@ def run_rolling_spillovers(
         print(f"[rolling] Saved summary CSV: {summary_csv}")
 
     meta = {
-        "WINDOW": WINDOW,
-        "STEP": REBALANCE_EVERY_N_DAYS,
-        "H": FEVD_HORIZON,
-        "RUN_TAG": RUN_TAG,
+        "WINDOW": window_eff,
+        "STEP": step_eff,
+        "H": fevd_horizon_eff,
+        "RUN_TAG": run_tag_eff,
+        "VAR_LAG_RULE": lag_rule_eff,
+        "VAR_LAG_FIXED_P": None if var_lag_fixed_p is None else int(var_lag_fixed_p),
+        "VAR_LAG_MAX": lag_max_eff,
+        "lag_mean": float(np.mean(lag_history)) if lag_history else np.nan,
+        "lag_min": int(np.min(lag_history)) if lag_history else None,
+        "lag_max": int(np.max(lag_history)) if lag_history else None,
         "n_eval_points": int(len(eval_idx)),
         "n_kept": int(len(dates)),
         "n_skipped": int(n_fail),
         "split_used": SPLIT_TO_USE,
+        "cache_path": str(cache_path),
         "loaded_from_cache": False,
     }
 

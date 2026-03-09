@@ -49,7 +49,14 @@ def _ensure_2d_float(df: pd.DataFrame) -> pd.DataFrame:
         x[c] = pd.to_numeric(x[c], errors="coerce")
     if x.isna().any().any():
         raise VarFitError("Returns window contains NaNs after coercion; VAR cannot be fit.")
-    return x.astype(float)
+    x = x.astype(float)
+
+    # statsmodels emits noisy warnings when DatetimeIndex has no explicit freq.
+    # VAR estimation only uses row order here, so switch to an integer index.
+    if isinstance(x.index, (pd.DatetimeIndex, pd.PeriodIndex)):
+        x.index = pd.RangeIndex(start=0, stop=len(x), step=1)
+
+    return x
 
 
 def select_var_lag(

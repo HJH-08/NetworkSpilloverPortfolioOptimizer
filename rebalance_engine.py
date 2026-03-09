@@ -125,6 +125,9 @@ def compute_weights_over_time(
     score_method: str = "to_others",         # 'to_others' or 'net_pos'
     opt_cfg: OptConfig = OptConfig(),
     use_cache_prices: bool = True,
+    window: int = WINDOW,
+    returns_df: Optional[pd.DataFrame] = None,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Returns:
@@ -134,8 +137,15 @@ def compute_weights_over_time(
     which are typically every STEP business days after the first window.
     """
     # Load returns
-    bundle = get_returns_bundle(use_cache=use_cache_prices)
-    rets = bundle.returns  # daily returns, index = business days, columns = assets
+    if window < 2:
+        raise ValueError("window must be >= 2.")
+
+    if returns_df is None:
+        bundle = get_returns_bundle(use_cache=use_cache_prices)
+        rets = bundle.returns  # daily returns, index = business days, columns = assets
+    else:
+        rets = returns_df.copy()
+    rets = rets.sort_index()
 
     # Load spillovers
     cache = load_spillover_cache(spillover_npz_path)
@@ -161,21 +171,21 @@ def compute_weights_over_time(
             continue
 
         end_loc = rets.index.get_loc(t)
-        start_loc = end_loc - (WINDOW - 1)
+        start_loc = end_loc - (window - 1)
 
 
         if start_loc < 0:
             # not enough history yet
             continue
 
-        window = rets.iloc[start_loc : end_loc + 1]
+        window_rets = rets.iloc[start_loc : end_loc + 1]
 
         # Safety: if any NaNs, skip (ideally none after your cleaning)
-        if window.isna().any().any():
+        if window_rets.isna().any().any():
             # you could also choose window.dropna(), but that changes window length
             continue
 
-        Sigma = _cov_from_window(window)
+        Sigma = _cov_from_window(window_rets)
 
         if model == "min_var":
             res = optimize_min_variance(Sigma, cfg=opt_cfg, w_prev=w_prev)
@@ -192,10 +202,11 @@ def compute_weights_over_time(
         w = res.w
         W_rows.append(w)
         W_dates.append(t)
-        active = (w > 1e-6).sum()
-        print("Active assets:", active)
-        top = pd.Series(w, index=assets).sort_values(ascending=False).head(5)
-        print(top)
+        if verbose:
+            active = (w > 1e-6).sum()
+            print("Active assets:", active)
+            top = pd.Series(w, index=assets).sort_values(ascending=False).head(5)
+            print(top)
 
 
         w_prev = w

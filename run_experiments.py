@@ -11,6 +11,8 @@ One-command experiment runner:
 - backtests each with the SAME engine + assumptions
 - prints a comparison table
 - saves outputs to results/reports/
+  - data provenance summary (json/csv)
+  - return descriptive statistics (per-asset + cross-section)
 
 Usage:
     python run_experiments.py
@@ -33,11 +35,24 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from config import CACHE_DIR, REPORTS_DIR, PLOTS_DIR, TCOST_BPS, WINDOW, WEIGHT_BOUNDS, RUN_TAG, save_config
-from returns import get_returns_bundle
+from config import (
+    CACHE_DIR,
+    FEVD_HORIZON,
+    PLOTS_DIR,
+    REBALANCE_EVERY_N_DAYS,
+    REPORTS_DIR,
+    RUN_TAG,
+    TCOST_BPS,
+    VAR_LAG_CRITERION,
+    WEIGHT_BOUNDS,
+    WINDOW,
+    save_config,
+)
+from returns import get_returns_bundle, export_return_descriptive_reports
 from benchmarks import equal_weight_over_time, min_variance_over_time, mean_variance_over_time
 from spillover_aware_optimizer import OptConfig
 from rebalance_engine import compute_weights_over_time
+from data_summary import export_data_provenance_reports
 import crisis_eval
 import report_plots
 import network_metrics
@@ -47,8 +62,7 @@ from backtest import run_backtest, compute_metrics
 
 def _pick_spillover_npz() -> str:
     """
-    Pick the most recently modified .npz in CACHE_DIR.
-    (Better than lexicographic ordering.)
+    Prefer spillover caches that match current config; fallback to newest file.
     """
     files = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".npz")]
     if not files:
@@ -58,8 +72,16 @@ def _pick_spillover_npz() -> str:
         files = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith(".npz")]
         if not files:
             raise RuntimeError(f"No .npz spillover files found in CACHE_DIR={CACHE_DIR} after recompute.")
-    files.sort(key=lambda p: os.path.getmtime(p))
-    return files[-1]
+    token = f"_win{WINDOW}_step{REBALANCE_EVERY_N_DAYS}_H{FEVD_HORIZON}_lag{str(VAR_LAG_CRITERION).lower()}"
+    preferred = [p for p in files if token in os.path.basename(p)]
+    pool = preferred if preferred else files
+    pool.sort(key=lambda p: os.path.getmtime(p))
+    chosen = pool[-1]
+    if preferred:
+        print(f"[run] Using config-matching cache pattern: {token}")
+    else:
+        print(f"[run] No config-matching cache found for pattern: {token}. Falling back to latest file.")
+    return chosen
 
 
 def _load_spillover_dates(npz_path: str) -> pd.DatetimeIndex:
@@ -132,6 +154,26 @@ def main() -> None:
     rets = bundle.returns.dropna(how="any")  # keep it strict for fair comparison
     assets = rets.columns
     print("[run] returns shape:", rets.shape, "assets:", list(assets))
+
+    # Reproducibility artefacts: data provenance + return descriptive stats
+    if bundle.price_provenance is not None:
+        prov_json_path, prov_csv_path = export_data_provenance_reports(
+            bundle.price_provenance,
+            run_tag=RUN_TAG,
+            reports_dir=REPORTS_DIR,
+        )
+        print("[saved] -", str(prov_json_path))
+        print("[saved] -", str(prov_csv_path))
+    else:
+        print("[run] Warning: price provenance metadata unavailable.")
+
+    ret_stats_path, ret_summary_path = export_return_descriptive_reports(
+        rets,
+        run_tag=RUN_TAG,
+        reports_dir=REPORTS_DIR,
+    )
+    print("[saved] -", str(ret_stats_path))
+    print("[saved] -", str(ret_summary_path))
 
     # Use spillover cache dates so ALL strategies share identical rebalance dates
     npz_path = _pick_spillover_npz()

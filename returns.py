@@ -13,12 +13,15 @@ Responsibilities:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import pandas as pd
 
 from config import (
+    ANNUALIZATION_FACTOR,
+    REPORTS_DIR,
     RETURN_TYPE,
     WINSORIZE,
     WINSOR_Q,
@@ -112,6 +115,7 @@ class ReturnsBundle:
     prices: pd.DataFrame
     returns: pd.DataFrame
     splits: Dict[str, pd.DataFrame]
+    price_provenance: Dict[str, Any] | None = None
 
 
 def get_returns_bundle(
@@ -129,7 +133,7 @@ def get_returns_bundle(
     - Optional winsorization
     - Chronological train/valid/test splits
     """
-    prices = get_price_panel(use_cache=use_cache)
+    prices, provenance = get_price_panel(use_cache=use_cache, return_metadata=True)
 
     # Normalize columns (critical for LSEG field-level outputs)
     prices = prices.copy()
@@ -168,7 +172,108 @@ def get_returns_bundle(
     if len(splits["test"]) == 0:
         print("[returns] Warning: test split is empty. (This may be ok early, but check dates.)")
 
-    return ReturnsBundle(prices=prices, returns=rets, splits=splits)
+    return ReturnsBundle(prices=prices, returns=rets, splits=splits, price_provenance=provenance)
+
+
+def compute_return_descriptive_stats(
+    returns_df: pd.DataFrame,
+    *,
+    annualization_factor: int = ANNUALIZATION_FACTOR,
+) -> pd.DataFrame:
+    """
+    Per-asset descriptive statistics for the cleaned daily return panel.
+    """
+    if returns_df.empty:
+        raise ValueError("returns_df is empty; cannot compute descriptive statistics.")
+
+    count = returns_df.count()
+    mean_daily = returns_df.mean()
+    std_daily = returns_df.std(ddof=1)
+
+    stats = pd.DataFrame(
+        {
+            "sample_size": count.astype(int),
+            "mean_daily_return": mean_daily,
+            "std_daily_return": std_daily,
+            "annualised_mean": mean_daily * annualization_factor,
+            "annualised_volatility": std_daily * np.sqrt(annualization_factor),
+            "skewness": returns_df.skew(),
+            "kurtosis": returns_df.kurt(),
+            "min": returns_df.min(),
+            "max": returns_df.max(),
+            "median": returns_df.median(),
+            "pct_positive_days": returns_df.gt(0).sum().div(count),
+        }
+    )
+    stats.index.name = "asset"
+    return stats.sort_index()
+
+
+def compute_return_cross_section_summary(
+    returns_df: pd.DataFrame,
+    *,
+    annualization_factor: int = ANNUALIZATION_FACTOR,
+) -> pd.DataFrame:
+    """
+    One-row compact summary across the asset cross-section.
+    """
+    if returns_df.empty:
+        raise ValueError("returns_df is empty; cannot compute cross-section summary.")
+
+    n_assets = returns_df.shape[1]
+    corr = returns_df.corr()
+    if n_assets >= 2:
+        tri = np.triu_indices(n_assets, k=1)
+        avg_pair_corr = float(np.nanmean(corr.values[tri]))
+    else:
+        avg_pair_corr = np.nan
+
+    ann_vol = returns_df.std(ddof=1) * np.sqrt(annualization_factor)
+    summary = pd.DataFrame(
+        [
+            {
+                "start_date": str(returns_df.index.min().date()),
+                "end_date": str(returns_df.index.max().date()),
+                "num_dates": int(len(returns_df)),
+                "num_assets": int(n_assets),
+                "average_pairwise_correlation": avg_pair_corr,
+                "average_annualised_volatility": float(ann_vol.mean()),
+                "average_skewness": float(returns_df.skew().mean()),
+                "average_kurtosis": float(returns_df.kurt().mean()),
+            }
+        ]
+    )
+    return summary
+
+
+def export_return_descriptive_reports(
+    returns_df: pd.DataFrame,
+    *,
+    run_tag: str = RUN_TAG,
+    reports_dir: Path = REPORTS_DIR,
+    annualization_factor: int = ANNUALIZATION_FACTOR,
+) -> tuple[Path, Path]:
+    """
+    Export per-asset and compact cross-section return descriptive statistics.
+    """
+    reports_dir = Path(reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    detailed = compute_return_descriptive_stats(
+        returns_df,
+        annualization_factor=annualization_factor,
+    )
+    summary = compute_return_cross_section_summary(
+        returns_df,
+        annualization_factor=annualization_factor,
+    )
+
+    detailed_path = reports_dir / f"return_descriptive_stats_{run_tag}.csv"
+    summary_path = reports_dir / f"return_cross_section_summary_{run_tag}.csv"
+
+    detailed.to_csv(detailed_path, float_format="%.10f")
+    summary.to_csv(summary_path, index=False, float_format="%.10f")
+    return detailed_path, summary_path
 
 
 # -------------------------

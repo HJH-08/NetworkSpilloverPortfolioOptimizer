@@ -14,7 +14,7 @@ Design goals:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -32,6 +32,7 @@ from config import (
     RUN_TAG,
     MIN_ASSET_COVERAGE,
     MIN_START_DATE,
+    RETURN_TYPE,
 )
 
 
@@ -103,6 +104,27 @@ def _apply_missing_policy(prices: pd.DataFrame) -> pd.DataFrame:
         return filled.dropna(axis=0, how="any")
 
     raise ValueError(f"Unknown MISSING_POLICY: {MISSING_POLICY}")
+
+
+def _normalize_price_columns(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize price-panel columns to stable string asset identifiers.
+    Handles common LSEG MultiIndex layouts like (Field, Instrument).
+    """
+    out = prices.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        lvl0 = out.columns.get_level_values(0).astype(str)
+        lvl1 = out.columns.get_level_values(1).astype(str)
+
+        if lvl0.nunique() == 1 or any(x.upper().startswith("TRDPRC") for x in lvl0.unique()):
+            out.columns = lvl1
+        elif lvl1.nunique() == 1 or any(x.upper().startswith("TRDPRC") for x in lvl1.unique()):
+            out.columns = lvl0
+        else:
+            out.columns = pd.Index(["|".join(map(str, t)) for t in out.columns])
+
+    out.columns = out.columns.astype(str)
+    return out
 
 
 def _maybe_convert_to_ric(universe: Sequence[str]) -> Sequence[str]:
@@ -225,16 +247,22 @@ def get_price_panel(
     start_date: str = START_DATE,
     end_date: str = END_DATE,
     price_field: str = PRICE_FIELD,
-) -> pd.DataFrame:
+    return_metadata: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]:
     """
     Main entry point:
       - loads cached CSV if available (and use_cache=True)
       - otherwise fetches from provider, then caches
 
-    Returns: cleaned prices with aligned dates and missing-data policy applied.
+    Returns:
+      - cleaned prices with aligned dates and missing-data policy applied
+      - if return_metadata=True, returns (prices, provenance_metadata)
     """
     cache_name = cache_name or f"prices_{RUN_TAG}.csv"
     cache_path = DATA_CACHE_DIR / cache_name
+    source_mode = "cached_csv"
+    source_desc = str(cache_path.resolve())
+    requested_universe = [str(x) for x in universe]
 
     if use_cache and cache_path.exists():
         prices = load_prices_from_csv(cache_path)
@@ -245,21 +273,37 @@ def get_price_panel(
         uni = _maybe_convert_to_ric(universe)
         prices = fetch_prices_lseg_desktop(uni, start_date, end_date, price_field)
         save_prices_to_csv(prices, cache_path)
+        source_mode = "lseg_fetch_then_cached_csv"
+        source_desc = f"lseg.data history request cached at {cache_path.resolve()}"
 
-    # Ensure columns are strings and sorted for stable downstream behaviour
-    prices.columns = prices.columns.astype(str)
+    prices = _normalize_price_columns(prices)
     prices = prices.sort_index().sort_index(axis=1)
+
+    raw_assets = [str(c) for c in prices.columns]
+    raw_n_dates = int(len(prices))
+    raw_n_assets = int(prices.shape[1])
 
     # -------------------------
     # Asset coverage filter (prevents drop_any nuking everything)
     # -------------------------
+    min_start_date_applied = None
     if "MIN_START_DATE" in globals() and MIN_START_DATE:
+        min_start_date_applied = str(pd.to_datetime(MIN_START_DATE).date())
         prices = prices.loc[pd.to_datetime(MIN_START_DATE):]
 
     # Drop assets that are mostly missing (bad identifiers or short history)
     coverage = prices.notna().mean(axis=0)
     keep_cols = coverage[coverage >= MIN_ASSET_COVERAGE].index.tolist()
     dropped = [c for c in prices.columns if c not in keep_cols]
+    dropped_assets = [
+        {
+            "asset": str(a),
+            "reason": "coverage_below_threshold",
+            "coverage": float(coverage.loc[a]),
+            "coverage_threshold": float(MIN_ASSET_COVERAGE),
+        }
+        for a in dropped
+    ]
 
     if len(keep_cols) == 0:
         raise RuntimeError(
@@ -272,19 +316,13 @@ def get_price_panel(
         dropped_path = REPORTS_DIR / f"dropped_assets_{RUN_TAG}.txt"
         with open(dropped_path, "w") as f:
             f.write("Dropped assets (low coverage):\n")
-            for a in dropped:
-                f.write(f"{a}\n")
-    
-    # Flatten MultiIndex columns like (Field, Instrument) or (Instrument, Field)
-    if isinstance(prices.columns, pd.MultiIndex):
-        # If one level is the field name, keep the instrument level
-        if "TRDPRC_1" in prices.columns.get_level_values(0):
-            prices.columns = prices.columns.get_level_values(1)
-        else:
-            prices.columns = prices.columns.get_level_values(0)
+            for d in dropped_assets:
+                f.write(f"{d['asset']} (coverage={d['coverage']:.4f}, threshold={d['coverage_threshold']:.2f})\n")
 
 
     prices = prices[keep_cols]
+    post_coverage_n_dates = int(len(prices))
+    post_coverage_n_assets = int(prices.shape[1])
 
     # Apply missing policy (alignment + cleaning)
     prices = _apply_missing_policy(prices)
@@ -299,6 +337,39 @@ def get_price_panel(
     if len(prices) == 0:
         raise RuntimeError("No rows left after filtering/cleaning. Check date range or missing policy.")
 
+    provenance = {
+        "run_tag": RUN_TAG,
+        "provider_used": DATA_PROVIDER,
+        "raw_source_used": source_desc,
+        "source_mode": source_mode,
+        "cache_file": str(cache_path.resolve()),
+        "price_field_used": price_field,
+        "universe_requested": requested_universe,
+        "universe_requested_count": len(requested_universe),
+        "universe_raw_columns": raw_assets,
+        "universe_raw_columns_count": raw_n_assets,
+        "assets_retained": [str(c) for c in prices.columns],
+        "assets_retained_count": int(prices.shape[1]),
+        "assets_dropped": dropped_assets,
+        "start_date_requested": str(pd.to_datetime(start_date).date()),
+        "end_date_requested": str(pd.to_datetime(end_date).date()),
+        "start_date_actual": str(prices.index.min().date()),
+        "end_date_actual": str(prices.index.max().date()),
+        "min_start_date_applied": min_start_date_applied,
+        "price_rows_raw": raw_n_dates,
+        "price_rows_post_coverage": post_coverage_n_dates,
+        "price_rows_final": int(len(prices)),
+        "price_observations_raw": raw_n_dates * raw_n_assets,
+        "price_observations_post_coverage": post_coverage_n_dates * post_coverage_n_assets,
+        "price_observations_final": int(prices.size),
+        "missing_data_policy": MISSING_POLICY,
+        "ffill_limit": int(FFILL_LIMIT) if MISSING_POLICY == "ffill_then_drop" else None,
+        "min_asset_coverage": float(MIN_ASSET_COVERAGE),
+        "return_type": RETURN_TYPE,
+    }
+
+    if return_metadata:
+        return prices, provenance
     return prices
 
 

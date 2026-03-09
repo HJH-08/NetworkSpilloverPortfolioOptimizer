@@ -47,3 +47,36 @@ def test_pivot_long_to_wide_and_datetime_index():
 
     assert list(wide.columns) == ["A", "B"]
     assert isinstance(wide.index, pd.DatetimeIndex)
+
+
+def test_get_price_panel_returns_metadata_from_cache(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_name = "prices_test.csv"
+    csv_path = cache_dir / cache_name
+
+    df = pd.DataFrame(
+        {
+            "Date": ["2020-01-01", "2020-01-02", "2020-01-03"],
+            "A": [10.0, 10.1, 10.2],
+            "B": [20.0, 20.1, 20.2],
+        }
+    )
+    df.to_csv(csv_path, index=False)
+
+    monkeypatch.setattr(dl, "DATA_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(dl, "REPORTS_DIR", tmp_path / "reports")
+    monkeypatch.setattr(dl, "MIN_ASSET_COVERAGE", 0.5)
+    monkeypatch.setattr(dl, "MIN_START_DATE", None)
+
+    prices, meta = dl.get_price_panel(
+        use_cache=True,
+        cache_name=cache_name,
+        universe=("A", "B"),
+        return_metadata=True,
+    )
+
+    assert not prices.empty
+    assert meta["source_mode"] == "cached_csv"
+    assert meta["assets_retained_count"] == 2
+    assert meta["missing_data_policy"] in {"drop_any", "ffill_then_drop"}
