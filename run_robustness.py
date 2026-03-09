@@ -32,7 +32,15 @@ import pandas as pd
 
 from backtest import compute_metrics, run_backtest
 from benchmarks import equal_weight_over_time, mean_variance_over_time, min_variance_over_time
-from config import ANNUALIZATION_FACTOR, REPORTS_DIR, RUN_TAG, TCOST_BPS, VAR_LAG_MAX, WEIGHT_BOUNDS
+from config import (
+    ANNUALIZATION_FACTOR,
+    REPORTS_DIR,
+    RUN_TAG,
+    SPILLOVER_OBJECTIVE_FORM,
+    TCOST_BPS,
+    VAR_LAG_MAX,
+    WEIGHT_BOUNDS,
+)
 from rebalance_engine import compute_weights_over_time
 from returns import get_returns_bundle
 from rolling_spillover import run_rolling_spillovers
@@ -294,6 +302,7 @@ def _run_single(
         model="spillover_aware",
         score_method="to_others",
         opt_cfg=sp_cfg,
+        objective_form=SPILLOVER_OBJECTIVE_FORM,
         use_cache_prices=True,
         window=spec.window_length,
         returns_df=returns_df,
@@ -611,6 +620,7 @@ def _compute_baseline_equity_curves(
             model="spillover_aware",
             score_method="to_others",
             opt_cfg=sp_cfg,
+            objective_form=SPILLOVER_OBJECTIVE_FORM,
             use_cache_prices=True,
             window=baseline.window_length,
             returns_df=returns_df,

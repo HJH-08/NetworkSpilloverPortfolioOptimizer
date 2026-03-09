@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from config import DEFAULT_LAMBDA, LAMBDA_GRID
+
 
 @dataclass(frozen=True)
 class CrisisWindow:
@@ -26,7 +28,7 @@ class RobustnessConfig:
     baseline_var_lag_rule: str = "aic"  # "aic" or "bic"
     baseline_var_lag_fixed_p: Optional[int] = None
     baseline_fevd_horizon: int = 10
-    lambda_star: float = 0.25
+    lambda_star: float = DEFAULT_LAMBDA
 
     # One-factor-at-a-time axes
     axis_window_values: Tuple[int, ...] = (200, 250, 300)
@@ -35,7 +37,7 @@ class RobustnessConfig:
     axis_fevd_horizons: Tuple[int, ...] = (10, 20)
 
     # Separate lambda sweep at baseline settings
-    lambda_values: Tuple[float, ...] = (0.0, 0.1, 0.25, 0.5, 1.0)
+    lambda_values: Tuple[float, ...] = LAMBDA_GRID
 
     # Core crises (fixed across all runs)
     crises: Tuple[CrisisWindow, ...] = (

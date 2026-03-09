@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+import config
 from config import (
     CACHE_DIR,
     FEVD_HORIZON,
@@ -203,12 +204,13 @@ def main() -> None:
     # ----------------------------
     # 4) Spillover aware
     # ----------------------------
-    sp_cfg = OptConfig(lam=0.5, w_max=w_max, long_only=True, fully_invested=True)
+    sp_cfg = OptConfig(lam=config.DEFAULT_LAMBDA, w_max=w_max, long_only=True, fully_invested=True)
     sp_w = compute_weights_over_time(
         spillover_npz_path=npz_path,
         model="spillover_aware",
         score_method="to_others",
         opt_cfg=sp_cfg,
+        objective_form=config.SPILLOVER_OBJECTIVE_FORM,
         use_cache_prices=True,
     )
 

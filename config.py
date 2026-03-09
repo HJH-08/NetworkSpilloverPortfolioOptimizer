@@ -159,9 +159,17 @@ TURNOVER_LIMIT: Optional[float] = None  # e.g. 0.30 means max 30% turnover per r
 # Spillover-aware optimization knobs
 # -------------------------
 
+# Baseline spillover penalty used in the main experiment pipeline.
+DEFAULT_LAMBDA: float = 0.5
+
 # Candidate lambdas for tuning on validation set.
 # Include 0 for "no spillover penalty" to compare apples-to-apples.
-LAMBDA_GRID: Tuple[float, ...] = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
+LAMBDA_GRID: Tuple[float, ...] = (0.0, 0.1, 0.25, 0.5, 1.0)
+
+# Optimization form for the spillover term:
+# - "linear": lambda * s' w
+# - "quadratic": lambda * sum_i s_i * w_i^2
+SPILLOVER_OBJECTIVE_FORM: Literal["linear", "quadratic"] = "linear"
 
 # Define what the penalty uses (you’ll implement later):
 # - "out_spill": penalize holdings in transmitters
@@ -227,6 +235,8 @@ class Config:
     tcost_bps: float = TCOST_BPS
     turnover_limit: Optional[float] = TURNOVER_LIMIT
 
+    objective_form: str = SPILLOVER_OBJECTIVE_FORM
+    default_lambda: float = DEFAULT_LAMBDA
     lambda_grid: Tuple[float, ...] = LAMBDA_GRID
     penalty_mode: str = SPILLOVER_PENALTY_MODE
 

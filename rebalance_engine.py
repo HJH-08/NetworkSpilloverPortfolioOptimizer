@@ -24,6 +24,7 @@ import pandas as pd
 from config import (
     WINDOW,
     CACHE_DIR,
+    SPILLOVER_OBJECTIVE_FORM,
 )
 
 
@@ -124,6 +125,7 @@ def compute_weights_over_time(
     model: str = "spillover_aware",          # 'min_var' or 'spillover_aware'
     score_method: str = "to_others",         # 'to_others' or 'net_pos'
     opt_cfg: OptConfig = OptConfig(),
+    objective_form: str = SPILLOVER_OBJECTIVE_FORM,
     use_cache_prices: bool = True,
     window: int = WINDOW,
     returns_df: Optional[pd.DataFrame] = None,
@@ -139,6 +141,8 @@ def compute_weights_over_time(
     # Load returns
     if window < 2:
         raise ValueError("window must be >= 2.")
+    if objective_form not in {"linear", "quadratic"}:
+        raise ValueError("objective_form must be 'linear' or 'quadratic'.")
 
     if returns_df is None:
         bundle = get_returns_bundle(use_cache=use_cache_prices)
@@ -195,7 +199,13 @@ def compute_weights_over_time(
             # cache assets -> common assets mapping
             s_full = pd.Series(s, index=cache.assets)
             s = s_full.loc[assets].values
-            res = optimize_spillover_aware(Sigma, s, cfg=opt_cfg, w_prev=w_prev, penalty="linear")
+            res = optimize_spillover_aware(
+                Sigma,
+                s,
+                cfg=opt_cfg,
+                w_prev=w_prev,
+                penalty=objective_form,
+            )
         else:
             raise ValueError("model must be 'min_var' or 'spillover_aware'.")
 
