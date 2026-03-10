@@ -24,6 +24,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from config import CACHE_DIR, PLOTS_DIR, REPORTS_DIR, STRESS_PERIODS, RUN_TAG
+from crisis_eval import WINDOWS as REPORT_STRESS_WINDOWS
 
 
 def _pick_latest_npz() -> str:
@@ -59,6 +60,44 @@ def plot_tci_with_stress_windows() -> Path:
         plt.axvspan(start_ts, end_ts, alpha=0.2, label=label)
 
     plt.title("Total Connectedness Index (TCI) with Stress Windows")
+    plt.xlabel("Date")
+    plt.ylabel("TCI (%)")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+
+    return out_path
+
+
+def plot_tci_with_report_stress_windows_only() -> Path:
+    """
+    Report-ready TCI plot with only the four predefined stress windows used in crisis_eval.WINDOWS.
+    """
+    npz_path = _pick_latest_npz()
+    blob = np.load(npz_path, allow_pickle=False)
+
+    dates = pd.to_datetime(blob["dates"].astype("datetime64[ns]"))
+    tci = pd.Series(blob["tci"], index=dates, name="TCI")
+
+    out_path = PLOTS_DIR / f"tci_stress_report_windows_{RUN_TAG}.png"
+
+    plt.figure()
+    plt.plot(tci.index, tci.values, label="TCI")
+
+    # Intentionally restrict shading to the four report windows only.
+    # This excludes broader STRESS_PERIODS spans (e.g., late-2018 selloff band).
+    x_min, x_max = tci.index.min(), tci.index.max()
+    used_labels = set()
+    for name, start, end in REPORT_STRESS_WINDOWS:
+        start_ts = pd.to_datetime(start)
+        end_ts = pd.to_datetime(end)
+        if end_ts < x_min or start_ts > x_max:
+            continue
+        label = name if name not in used_labels else None
+        used_labels.add(name)
+        plt.axvspan(start_ts, end_ts, alpha=0.2, label=label)
+
+    plt.title("Total Connectedness Index (TCI) with Report Stress Windows")
     plt.xlabel("Date")
     plt.ylabel("TCI (%)")
     plt.tight_layout()
@@ -135,6 +174,8 @@ def plot_xlf_allocation_banking_stress() -> Path:
 def main() -> None:
     out = plot_tci_with_stress_windows()
     print("[empirical] Saved:", out)
+    out_report = plot_tci_with_report_stress_windows_only()
+    print("[empirical] Saved:", out_report)
     out2 = plot_xlf_allocation_banking_stress()
     print("[empirical] Saved:", out2)
 
